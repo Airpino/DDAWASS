@@ -27,3 +27,5 @@ Suggests: testthat (>= 3.0.0), knitr, rmarkdown, CUB
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 RoxygenNote: 7.3.1
+URL: https://github.com/Airpino/DDAWASS
+BugReports: https://github.com/Airpino/DDAWASS/issues
