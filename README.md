@@ -32,9 +32,7 @@ and provides:
 - two-component linear regression;
 - a distributional Cronbach's alpha.
 
-Graphical tools for distributional data (Green Eyes plots and distributional
-heatmaps) are in the companion package
-[DistrViz](https://github.com/Airpino/DistrViz).
+
 
 ## Installation
 
