@@ -1,0 +1,29 @@
+Package: DDAWASS
+Type: Package
+Title: Discrete Distribution Data Analysis with Wasserstein Distance
+Version: 0.1.0
+Date: 2026-10-21
+Authors@R: person(given = "Antonio", family = "Irpino", role = c("aut", "cre", "cph"),
+    email = "antonio.irpino@unicampania.it",
+    comment = c(ORCID = "0000-0001-9293-7180"))
+Description: S4 classes and methods for the analysis of data described by
+    discrete distributions with finite support (e.g. frequency distributions of
+    ratings, scores or counts observed on groups of individuals), using the L2
+    Wasserstein metric between quantile functions. It is the discrete
+    counterpart of 'HistDAWass' and provides exact Wasserstein distances (in
+    C++), barycenters, Wasserstein variance, covariance and correlation,
+    k-means and hierarchical clustering, quantile-based principal component
+    and multiple factor analysis, two-component linear regression and
+    reliability (Cronbach's alpha) indices. See Crocetta, Irpino, Antonucci
+    and Marin (2025) <doi:10.1007/s11135-024-01956-0>.
+License: GPL (>= 3)
+Encoding: UTF-8
+LazyData: true
+Depends: R (>= 4.0.0), methods
+Imports: Rcpp (>= 1.0.0), HistDAWass, FactoMineR, ggplot2, rlang, tibble,
+    stats, utils, grDevices
+LinkingTo: Rcpp
+Suggests: testthat (>= 3.0.0), knitr, rmarkdown, CUB
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+RoxygenNote: 7.3.1

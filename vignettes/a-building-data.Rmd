@@ -1,0 +1,161 @@
+---
+title: "1. Building discrete distributional data"
+output:
+  rmarkdown::html_vignette:
+    math_method: mathjax
+vignette: >
+  %\VignetteIndexEntry{1. Building discrete distributional data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+has_cub <- requireNamespace("CUB", quietly = TRUE)
+knitr::opts_chunk$set(eval = has_cub)
+```
+
+```{r, eval = !has_cub, echo = FALSE, results = "asis"}
+cat("**This vignette needs the 'CUB' package (for the `univer` data), which is not installed: code is shown but not run.**")
+```
+
+Survey data are usually stored as *microdata*: one row per respondent, with
+some categorical variables (gender, faculty, age class, ...) and a set of
+items measured on an ordinal scale (e.g. a 1-7 Likert scale). When the
+interest is in **groups** of respondents rather than in single individuals,
+each group can be described, for each item, by the **frequency distribution**
+of the scores given by its members. The resulting table, with groups in the
+rows, items in the columns and a discrete distribution in each cell, is a
+*discrete distributional data table*: the object of the **DDAWASS** package.
+
+This vignette shows how to build such a table (a `MatD` object) from
+standard data.
+
+```{r}
+library(DDAWASS)
+```
+
+## The data: evaluation of the orientation services
+
+We use the `univer` data of the **CUB** package: a survey on the evaluation of
+the orientation services of the University of Naples Federico II (2002), with
+2179 students who rated, on a 1-7 scale (1 = extremely unsatisfied, 7 =
+extremely satisfied), the information received (`informat`), the willingness
+of the staff (`willingn`), the office hours (`officeho`), the competence of the
+staff (`compete`) and the global satisfaction (`global`).
+
+```{r}
+data(univer, package = "CUB")
+str(univer)
+```
+
+The covariates are coded as integers: we recode the ones we use as factors
+(the faculties are anonymous codes in the original data).
+
+```{r}
+univer$Faculty <- factor(sprintf("F%02d", univer$faculty))
+univer$Gender  <- factor(univer$gender, levels = 0:1, labels = c("M", "W"))
+univer$User    <- factor(univer$freqserv, levels = 0:1, labels = c("occasional", "regular"))
+items <- c("informat", "willingn", "officeho", "compete", "global")
+```
+
+## From microdata to a `MatD`
+
+`data2MatD()` groups the rows by one or more categorical variables and
+computes, for each group and each item, the distribution of the scores. With
+`support = 1:7` all the distributions share the seven categories of the scale
+(categories never chosen get a zero frequency), which makes plots and tables
+easier to read.
+
+```{r}
+by_faculty <- data2MatD(univer, unit = "Faculty", vars = items, support = 1:7)
+by_faculty
+```
+
+Groups can be defined by crossing several variables. Very small groups give
+unreliable distributions: `min.n` drops the groups with fewer observations
+than a threshold.
+
+```{r}
+M <- data2MatD(univer, unit = c("Faculty", "Gender"), vars = items,
+               support = 1:7, min.n = 10)
+dim(M@M)
+get.MatD.stats(M, "n")$mat[1:6, "global"]   # group sizes
+```
+
+The 26 rows are the faculty-by-gender groups. This table is used in all the
+vignettes.
+
+## Inspecting the data
+
+Each cell is a `distributionD` object, with the support `x`, the
+probabilities `p`, the cumulative distribution `cdf`, the number of
+observations `n`, the mean `m` and the standard deviation `s`.
+
+```{r}
+d <- get.cell.MatD(M, "F02_W", "global")
+d
+compQ(d, c(0.25, 0.5, 0.75))   # quartiles
+compP(d, 5)                    # proportion of scores <= 5
+```
+
+A grid of bar charts shows a part of the table:
+
+```{r, fig.height = 5}
+plot(M[c("F02_M", "F02_W", "F06_M", "F06_W"), ])
+```
+
+`get.MatD.stats()` returns a matrix of summary statistics (means, standard
+deviations, quantiles, skewness, ...) of all the cells:
+
+```{r}
+round(get.MatD.stats(M, "mean")$mat[1:6, ], 2)
+round(get.MatD.stats(M, "std")$mat[1:6, ], 2)
+```
+
+## Other ways of building the data
+
+**From a frequency table.** Aggregated data often come as counts by group,
+item and score. `long2MatD()` reads this long format.
+
+```{r}
+tab <- as.data.frame(table(unit = univer$Faculty, value = univer$global))
+tab$variable <- "global"
+head(tab)
+G <- long2MatD(tab, unit = "unit", variable = "variable", value = "value", freq = "Freq")
+G[1:3, ]
+```
+
+**Single distributions** can be created from probabilities, counts or raw
+observations:
+
+```{r}
+distributionD(x = 1:5, p = c(0.1, 0.1, 0.2, 0.3, 0.3))
+distributionD(x = 1:5, counts = c(2, 2, 4, 6, 6))
+distributionD(c(4, 5, 5, 3, 5, 4, 2))
+```
+
+and arranged in a matrix with `MatD()`. **From histograms**: a `MatH` of
+the HistDAWass package can be discretized with `MatH2MatD()`. Finally,
+`MatD2long()` exports a `MatD` as a long data frame, e.g. for plotting with
+**ggplot2** or for saving to a file.
+
+```{r}
+head(MatD2long(M))
+```
+
+## Next steps
+
+The vignette *2. Basic statistics of discrete distributional data* shows how
+to describe the table (summary statistics of the cells, Wasserstein
+barycenters, variance, covariance and correlation). The other vignettes cover
+clustering, principal component analysis and regression.
+
+## References
+
+- Crocetta C., Irpino A., Antonucci L., Marin C. (2025). A performance
+  indicator and its decomposition according to the impacts of different
+  aspects based on distributional data. *Quality & Quantity*, 59(3),
+  2091-2110. doi:10.1007/s11135-024-01956-0
+- Iannario M., Piccolo D., Simone R. (2024). CUB: A Class of Mixture Models
+  for Ordinal Data. R package.

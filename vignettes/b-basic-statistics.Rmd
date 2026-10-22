@@ -1,0 +1,248 @@
+---
+title: "2. Basic statistics of discrete distributional data"
+output:
+  rmarkdown::html_vignette:
+    math_method: mathjax
+vignette: >
+  %\VignetteIndexEntry{2. Basic statistics of discrete distributional data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+has_cub <- requireNamespace("CUB", quietly = TRUE)
+knitr::opts_chunk$set(eval = has_cub)
+```
+
+```{r, eval = !has_cub, echo = FALSE, results = "asis"}
+cat("**This vignette needs the 'CUB' package (for the `univer` data), which is not installed: code is shown but not run.**")
+```
+
+This vignette shows how to extract descriptive statistics from a table of
+discrete distributions, at two levels:
+
+1. **each cell**: the usual statistics of a single distribution (mean,
+   median, quantiles, standard deviation, skewness, ...);
+2. **each distributional variable** (a column of the table): the
+   Wasserstein barycenter, the Wasserstein variance, covariance and
+   correlation (Irpino and Verde, 2015).
+
+We use the faculty-by-gender groups of the `univer` data (see the vignette
+*1. Building discrete distributional data*).
+
+```{r}
+library(DDAWASS)
+library(ggplot2)
+data(univer, package = "CUB")
+univer$Faculty <- factor(sprintf("F%02d", univer$faculty))
+univer$Gender  <- factor(univer$gender, levels = 0:1, labels = c("M", "W"))
+items <- c("informat", "willingn", "officeho", "compete", "global")
+M <- data2MatD(univer, unit = c("Faculty", "Gender"), vars = items,
+               support = 1:7, min.n = 10)
+M
+```
+
+## 1. Statistics of a single distribution
+
+Each cell is a `distributionD`:
+
+```{r}
+d <- get.cell.MatD(M, "F06_M", "global")
+d
+```
+
+Its moments and quantiles are returned by dedicated functions:
+
+```{r}
+c(mean = meanD(d), std = stdD(d), var = varD(d),
+  skewness = skewD(d), kurtosis = kurtD(d))
+compQ(d, c(0.1, 0.25, 0.5, 0.75, 0.9))   # quantiles
+compP(d, c(3, 4, 5))                     # cumulative probabilities
+```
+
+`compQ()` uses the left-continuous inverse of the cdf,
+$Q(t) = \min\{x : F(x) \ge t\}$; for a 1-7 scale it always returns one of
+the categories. `compP(d, 4)` is the share of judgements lower than or equal
+to 4 (the "not satisfied" students).
+
+## 2. Statistics of all the cells
+
+`get.MatD.stats()` computes a statistic for all the cells and returns a
+matrix (`$mat`). Available statistics are `"mean"`, `"median"`, `"std"`,
+`"var"`, `"skewness"`, `"kurtosis"`, `"min"`, `"max"`, `"quantile"` (with
+the probability `prob`), `"n"` (number of observations) and `"k"` (number of
+support values).
+
+```{r}
+means <- get.MatD.stats(M, "mean")$mat
+round(head(means), 2)
+round(head(get.MatD.stats(M, "std")$mat), 2)
+round(head(get.MatD.stats(M, "skewness")$mat), 2)
+head(get.MatD.stats(M, "quantile", prob = 0.1)$mat)   # first deciles
+head(get.MatD.stats(M, "n")$mat)                      # group sizes
+```
+
+Almost all the distributions are left-skewed (most judgements are 6 or 7):
+
+```{r}
+mean(get.MatD.stats(M, "skewness")$mat < 0)   # share of left-skewed cells
+```
+
+ These
+matrices are ordinary R matrices and can be used with any other tool: for
+instance, the groups with the lowest and highest mean global satisfaction
+are
+
+```{r}
+round(sort(means[, "global"])[c(1:3, 24:26)], 2)
+```
+
+Means alone may hide relevant differences. The share of unsatisfied students
+(scores 1-4) can be computed with `compP()` on all the cells:
+
+```{r}
+unsat <- apply(M@M, c(1, 2), function(cell) compP(cell[[1]], 4))
+round(head(unsat), 3)
+```
+
+## 3. The Wasserstein barycenter
+
+The barycenter (Fréchet mean) of a distributional variable is the
+distribution whose quantile function is the (weighted) average of the
+quantile functions of the cells: it minimizes the sum of squared L2
+Wasserstein distances from the data. `WD.vec.mean()` computes it exactly:
+
+```{r}
+g <- M[, "global"]
+bar <- WD.vec.mean(g)
+bar
+```
+
+The barycenter of discrete distributions is discrete, but its support is
+made of averages of quantiles: it has many values, generally not integers.
+
+### A barycenter on the original categories
+
+For presentation it is often useful to express the barycenter on the
+categories of the scale. `WD.vec.mean.simplified()` projects the exact
+barycenter on the support of the variable: each value receives the masses of
+the points that are nearest to it (for a 1-7 scale, the value 2 receives the
+masses in $(1.5, 2.5]$, the value 3 those in $(2.5, 3.5]$, and so on). This
+nearest-point rule gives the distribution on the categories closest to the
+exact barycenter in the Wasserstein distance. The same projection is
+available for any distribution or `MatD` with `simplifyD()`.
+
+```{r}
+bar_s <- WD.vec.mean.simplified(g, support = 1:7)
+bar_s
+WassSqDistD(bar, bar_s)       # approximation error
+```
+
+The simplified barycenter is an approximation for interpretation and
+display: all the computations of the package (variances, covariances, k-means
+prototypes, ...) use the exact barycenter.
+
+### Barycenter versus pooled distribution
+
+The barycenter is **not** the distribution obtained by pooling all the
+respondents. Pooling mixes the groups and adds the differences between them
+to the variability, while the barycenter describes a "typical group".
+
+```{r}
+univer$All <- "all"
+pooled <- get.cell.MatD(data2MatD(univer, unit = "All", vars = "global", support = 1:7), 1, 1)
+n <- get.MatD.stats(g, "n")$mat[, 1]
+bar_w <- WD.vec.mean(g, w = n)              # weighted by the group sizes
+rbind(pooled = c(mean = meanD(pooled), std = stdD(pooled)),
+      barycenter = c(meanD(bar), stdD(bar)),
+      weighted_barycenter = c(meanD(bar_w), stdD(bar_w)))
+```
+
+Weighting the groups by their sizes, the barycenter has the same mean as the
+pooled distribution, but a smaller standard deviation.
+
+```{r, fig.height = 3.5}
+cmp <- rbind(
+  data.frame(x = pooled@x, p = pooled@p, type = "pooled respondents"),
+  data.frame(x = bar_s@x, p = bar_s@p, type = "barycenter (simplified)"),
+  data.frame(x = WD.vec.mean.simplified(g, w = n, support = 1:7)@x,
+             p = WD.vec.mean.simplified(g, w = n, support = 1:7)@p,
+             type = "weighted barycenter (simplified)"))
+ggplot(cmp, aes(factor(x), p, fill = type)) +
+  geom_col(position = "dodge") +
+  labs(x = "global satisfaction", y = "probability", fill = NULL) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+With several columns, `WD.vec.mean()` returns a one-row `MatD` with the
+barycenters of all the variables:
+
+```{r}
+B <- WD.vec.mean.simplified(M, support = 1:7)
+round(get.MatD.stats(B, "mean")$mat, 2)
+```
+
+## 4. Wasserstein variance and its decomposition
+
+The Wasserstein variance of a variable is the mean squared distance of its
+distributions from the barycenter. Each squared distance can be split into
+the contributions of the means (position), of the standard deviations (size)
+and of the shapes:
+$$d_W^2(x_i, \bar{x}) = (\mu_i - \bar\mu)^2 + (\sigma_i - \bar\sigma)^2
+  + 2\sigma_i\bar\sigma\,(1 - \rho_{QQ}(x_i, \bar x)).$$
+Averaging over the groups gives a decomposition of the variance:
+
+```{r}
+WD.var.covar(g)
+dec <- t(sapply(seq_len(get.MatD.nrows(g)), function(i)
+  WassSqDistD(get.cell.MatD(g, i, 1), bar, details = TRUE)))
+var_dec <- colMeans(dec[, c("POSITION", "SIZE", "SHAPE")])
+round(var_dec, 4)
+round(var_dec / sum(var_dec), 3)       # shares
+```
+
+About two thirds of the variability of the global satisfaction across groups
+is due to differences in the mean judgement; the remaining third is due to
+differences in dispersion and shape, which an analysis of the means alone
+would ignore. `WD.SSQ()` returns the total sum of squares (deviance) of each
+variable.
+
+## 5. Covariance, correlation and reliability
+
+Covariances are computed on quantile functions:
+$C_{jk} = \sum_i w_i \int_0^1 (Q_{ij}(t) - \bar Q_j(t))(Q_{ik}(t) - \bar Q_k(t))dt$.
+
+```{r}
+round(WD.var.covar(M), 3)
+R <- WD.correlation(M)
+round(R, 3)
+```
+
+The correlation between two single distributions is measured instead by the
+correlation of their quantile functions, `rQQ()`, which is the shape
+component of the distance:
+
+```{r}
+rQQ(get.cell.MatD(M, "F06_M", "global"), get.cell.MatD(M, "F02_M", "global"))
+```
+
+Finally, the internal consistency of a set of items is measured by the
+distributional Cronbach's alpha (`GLOB`), decomposed into the part due to
+the means (`AVE`) and the part due to the centred distributions (`VAR`):
+
+```{r}
+WD.cronbach(M[, c("informat", "willingn", "officeho", "compete")])
+```
+
+## References
+
+- Irpino A., Romano E. (2007). Optimal histogram representation of large data
+  sets: Fisher vs piecewise linear approximation. *RNTI* E-9, 99-110.
+- Irpino A., Verde R. (2015). Basic statistics for distributional symbolic
+  variables: a new metric-based approach. *Advances in Data Analysis and
+  Classification*, 9(2), 143-175. doi:10.1007/s11634-014-0176-4
+- Crocetta C., Irpino A., Antonucci L., Marin C. (2025). A performance
+  indicator and its decomposition according to the impacts of different
+  aspects based on distributional data. *Quality & Quantity*, 59(3),
+  2091-2110. doi:10.1007/s11135-024-01956-0

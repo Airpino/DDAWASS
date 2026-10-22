@@ -1,0 +1,158 @@
+---
+title: "4. Linear regression for discrete distributional data"
+output:
+  rmarkdown::html_vignette:
+    math_method: mathjax
+vignette: >
+  %\VignetteIndexEntry{4. Linear regression for discrete distributional data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+has_cub <- requireNamespace("CUB", quietly = TRUE)
+knitr::opts_chunk$set(eval = has_cub)
+```
+
+```{r, eval = !has_cub, echo = FALSE, results = "asis"}
+cat("**This vignette needs the 'CUB' package (for the `univer` data), which is not installed: code is shown but not run.**")
+```
+
+Which aspects of a service drive the global satisfaction of a group of
+customers? With distributional data the question concerns whole
+distributions: we want to predict the distribution of the global
+satisfaction of each group from the distributions of the specific items.
+
+```{r}
+library(DDAWASS)
+library(ggplot2)
+data(univer, package = "CUB")
+univer$Faculty <- factor(sprintf("F%02d", univer$faculty))
+univer$Gender  <- factor(univer$gender, levels = 0:1, labels = c("M", "W"))
+items <- c("informat", "willingn", "officeho", "compete", "global")
+M <- data2MatD(univer, unit = c("Faculty", "Gender"), vars = items,
+               support = 1:7, min.n = 10)
+xv <- c("informat", "willingn", "officeho", "compete")
+```
+
+## The two-component model
+
+Let $Q_{y_i}$ be the quantile function of the response for group $i$, and
+$\mu_{x_{ij}}$ and $Q^c_{x_{ij}} = Q_{x_{ij}} - \mu_{x_{ij}}$ the mean and the
+centred quantile function of the explanatory variable $j$. The model of Irpino
+and Verde (2015) is
+$$Q_{y_i}(t) = \beta_0 + \sum_j \beta_j \mu_{x_{ij}} + \sum_j \gamma_j Q^c_{x_{ij}}(t) + e_i(t),
+\qquad \gamma_j \ge 0 .$$
+The $\beta$ coefficients explain the **position** (the means) of the response
+distributions; the $\gamma$ coefficients explain their **variability and
+shape**. The constraint $\gamma_j \ge 0$ guarantees that the predicted
+quantile functions are non-decreasing, i.e. that predictions are proper
+distributions. Parameters minimize the sum of squared Wasserstein distances
+between observed and predicted distributions; since centred quantile
+functions are orthogonal to constants, the problem splits into an ordinary
+least squares regression on the means and a non-negative least squares
+problem on the centred parts.
+
+## Estimation
+
+```{r}
+pars <- WD.regression.two.components(M, Yvar = "global", Xvars = xv)
+round(pars, 3)
+```
+
+The `AV_` coefficients are those of the regression of the mean global
+satisfaction on the means of the items; `compete` (competence of the staff)
+has the largest effect, followed by `willingn` and `officeho`. They coincide
+with an ordinary regression on the means:
+
+```{r}
+means <- as.data.frame(get.MatD.stats(M, "mean")$mat)
+round(coef(lm(global ~ informat + willingn + officeho + compete, data = means)), 3)
+```
+
+The `CEN_` coefficients show how the variability of the judgements on each
+item is transferred to the global judgement: again `compete` has the largest
+weight, while the dispersion of the evaluations of the office hours has
+almost no role.
+
+## Predictions and goodness of fit
+
+```{r}
+pred <- WD.regression.two.components.predict(M[, xv], pars)
+gof <- WD.regression.GOF(M[, "global"], pred)
+gof$RMSE_W
+gof$OMEGA
+gof$PSEUDOR2$index
+```
+
+`RMSE_W` is the root mean squared Wasserstein error (in the units of the
+scale); `OMEGA` and the pseudo-$R^2$ measure the share of the variability of
+the observed distributions reproduced by the model (Irpino and Verde, 2015).
+
+Observed and predicted distributions can be compared for some groups.
+Predicted distributions are discrete, but their support values are not
+restricted to the integers 1-7: they are linear combinations of the
+quantiles of the explanatory distributions.
+
+```{r, fig.height = 5}
+sel <- c("F02_M", "F06_W", "F11_M", "F13_W")
+obs <- MatD2long(M[sel, "global"]);   obs$type <- "observed"
+prd <- MatD2long(pred[sel, ]);        prd$type <- "predicted"
+both <- rbind(obs, prd)
+ggplot(both, aes(x, cdf, colour = type)) +
+  geom_step(direction = "hv", linewidth = 0.8) +
+  facet_wrap(~ row) +
+  scale_colour_manual(values = c(observed = "grey20", predicted = "#c62320")) +
+  labs(x = "global satisfaction", y = "cumulative distribution", colour = NULL) +
+  theme_minimal()
+```
+
+A summary view compares observed and predicted medians and interquartile
+ranges of all the groups:
+
+```{r}
+q_obs <- sapply(c(0.25, 0.5, 0.75), function(p) get.MatD.stats(M[, "global"], "quantile", p)$mat)
+q_prd <- sapply(c(0.25, 0.5, 0.75), function(p) get.MatD.stats(pred, "quantile", p)$mat)
+df <- data.frame(group = get.MatD.rownames(M), obs = q_obs[, 2], prd = q_prd[, 2],
+                 obs_lo = q_obs[, 1], obs_hi = q_obs[, 3])
+ggplot(df, aes(prd, obs)) +
+  geom_abline(colour = "grey60") +
+  geom_errorbar(aes(ymin = obs_lo, ymax = obs_hi), width = 0, colour = "grey60") +
+  geom_point(size = 2) +
+  labs(x = "predicted median", y = "observed median (bars: observed IQR)") +
+  theme_minimal()
+```
+
+## Bootstrap confidence intervals
+
+Standard errors can be obtained by resampling the groups:
+
+```{r}
+set.seed(42)
+B <- 200
+boot <- t(replicate(B, {
+  idx <- sample(get.MatD.nrows(M), replace = TRUE)
+  WD.regression.two.components(M[idx, ], Yvar = "global", Xvars = xv)
+}))
+ci <- t(apply(boot, 2, quantile, probs = c(0.025, 0.975)))
+round(cbind(estimate = pars, ci), 3)
+```
+
+With only 26 groups the intervals are wide. The competence of the staff
+(`compete`) has a clear effect on both the position and the variability of the
+global satisfaction; the information received (`informat`) and the
+willingness of the staff (`willingn`) matter mostly for the variability
+(`CEN_` coefficients), while the office hours (`officeho`) have a small effect
+on the means only.
+
+## References
+
+- Irpino A., Verde R. (2015). Linear regression for numeric symbolic
+  variables: a least squares approach based on Wasserstein distance.
+  *Advances in Data Analysis and Classification*, 9(1), 81-106.
+  doi:10.1007/s11634-015-0197-7
+- Crocetta C., Irpino A., Antonucci L., Marin C. (2025). A performance
+  indicator and its decomposition according to the impacts of different
+  aspects based on distributional data. *Quality & Quantity*, 59(3),
+  2091-2110. doi:10.1007/s11135-024-01956-0

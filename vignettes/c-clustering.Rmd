@@ -1,0 +1,188 @@
+---
+title: "3. Clustering discrete distributional data"
+output:
+  rmarkdown::html_vignette:
+    math_method: mathjax
+vignette: >
+  %\VignetteIndexEntry{3. Clustering discrete distributional data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+has_cub <- requireNamespace("CUB", quietly = TRUE)
+knitr::opts_chunk$set(eval = has_cub)
+```
+
+```{r, eval = !has_cub, echo = FALSE, results = "asis"}
+cat("**This vignette needs the 'CUB' package (for the `univer` data), which is not installed: code is shown but not run.**")
+```
+
+Groups of respondents can be clustered according to the whole distributions
+of their answers, not only according to their mean scores: two groups with
+the same mean satisfaction may differ a lot in polarization, in the share of
+very unsatisfied respondents or in the shape of the distribution. DDAWASS
+clusters the rows of a `MatD` using the L2 Wasserstein distance between
+distributions.
+
+We use the faculty-by-gender groups of the `univer` data built in the first
+vignette.
+
+```{r}
+library(DDAWASS)
+library(ggplot2)
+data(univer, package = "CUB")
+univer$Faculty <- factor(sprintf("F%02d", univer$faculty))
+univer$Gender  <- factor(univer$gender, levels = 0:1, labels = c("M", "W"))
+items <- c("informat", "willingn", "officeho", "compete", "global")
+M <- data2MatD(univer, unit = c("Faculty", "Gender"), vars = items,
+               support = 1:7, min.n = 10)
+# covariates of the groups, recovered from the labels
+groups <- data.frame(label = get.MatD.rownames(M))
+groups$Faculty <- sub("_.*", "", groups$label)
+groups$Gender  <- sub(".*_", "", groups$label)
+```
+
+## Distances between groups
+
+The distance between two rows is
+$d(i, i') = \sqrt{\sum_j d_W^2(x_{ij}, x_{i'j})}$, where $d_W$ is the L2
+Wasserstein distance between the distributions of item $j$. The distance
+matrix is computed in C++:
+
+```{r}
+D <- WD_MAT_DIST(M)
+round(D[1:6, 1:6], 3)
+```
+
+The variables can be weighted (argument `weights`), e.g. to give the same
+importance to items with different variability.
+
+## Hierarchical clustering
+
+`WD_hclust()` performs an agglomerative clustering on this distance; Ward's
+method (`"ward.D2"`) is consistent with the Wasserstein decomposition of the
+total variance into a within and a between part.
+
+```{r, fig.height = 5}
+hc <- WD_hclust(M, method = "ward.D2")
+plot(hc, main = "Ward clustering of faculty x gender groups", xlab = "", sub = "")
+rect.hclust(hc, k = 3)
+```
+
+```{r}
+cl_h <- cutree(hc, k = 3)
+table(cluster = cl_h, gender = groups$Gender)
+same <- tapply(cl_h, groups$Faculty, function(z) length(unique(z)) == 1)
+mean(same)   # share of faculties whose two groups are in the same cluster
+```
+
+Men and women are evenly spread across clusters and, for most faculties,
+the two groups fall in the same cluster: satisfaction with the orientation
+services depends on the faculty much more than on the gender of the
+students.
+
+## K-means (dynamic clustering)
+
+`WD_kmeans()` partitions the rows into `k` clusters minimizing the sum of
+squared Wasserstein distances from the cluster prototypes, which are the
+Wasserstein barycenters of the clusters. Several random starts (`rep`) are
+run and the best solution is returned. The `quality` index is the ratio
+between the between-cluster and the total sum of squares.
+
+```{r}
+set.seed(123)
+qual <- sapply(2:7, function(k) WD_kmeans(M, k, rep = 10)$quality)
+ggplot(data.frame(k = 2:7, quality = qual), aes(k, quality)) +
+  geom_line() + geom_point() +
+  labs(y = "between SS / total SS", title = "Quality of the partition") +
+  theme_minimal()
+```
+
+The gain is large up to three clusters and smaller afterwards; we keep
+$k = 3$.
+
+```{r}
+set.seed(123)
+km <- WD_kmeans(M, k = 3, rep = 20)
+km$quality
+km$solution$cardinality
+split(names(km$solution$IDX), km$solution$IDX)
+```
+
+The partition agrees with the hierarchical one:
+
+```{r}
+table(kmeans = km$solution$IDX, hclust = cl_h)
+```
+
+## Describing the clusters
+
+The prototypes are a `MatD` (one row per cluster), so they can be plotted
+and summarized like the data:
+
+Cluster labels are arbitrary; we sort the clusters by the mean global
+satisfaction of their prototypes (from the least to the most satisfied):
+
+```{r, fig.height = 4}
+proto <- km$solution$centers
+ord <- order(get.MatD.stats(proto, "mean")$mat[, "global"])
+proto <- proto[ord, ]
+rownames(proto@M) <- c("Low", "Medium", "High")
+round(get.MatD.stats(proto, "mean")$mat, 2)
+round(get.MatD.stats(proto, "quantile", prob = 0.1)$mat, 2)
+plot(proto)
+```
+
+The three clusters correspond to low, medium and high satisfaction: in the
+least satisfied one the distributions are shifted to the left and are more dispersed, with a
+non-negligible share of low scores (look at the 10% quantiles), while the
+most satisfied cluster has distributions concentrated on 6 and 7.
+
+How much of the separation is due to the means? The squared distances
+between the least and the most satisfied prototypes can be decomposed into
+position, size and shape components (see `WassSqDistD()`):
+
+```{r}
+comp <- t(sapply(items, function(v)
+  WassSqDistD(get.cell.MatD(proto, 1, v), get.cell.MatD(proto, 3, v), details = TRUE)))
+round(comp, 3)
+```
+
+For all the items most of the distance is due to the different means
+(`POSITION`), but differences in dispersion and shape are not negligible,
+especially for `willingn` and `global`.
+
+## Standardized clustering
+
+If the variables have very different variability, `standardize = TRUE`
+weights each variable by the inverse of its Wasserstein variance:
+
+```{r}
+set.seed(123)
+km_s <- WD_kmeans(M, k = 3, rep = 20, standardize = TRUE)
+table(raw = km$solution$IDX, standardized = km_s$solution$IDX)
+```
+
+Here the two partitions coincide, up to the numbering of the clusters.
+
+Graphical tools for distributional data (Green Eyes plots, distributional
+heatmaps with dendrograms) are provided by the companion package
+**DistrViz**.
+
+## References
+
+- Irpino A., Verde R. (2006). A new Wasserstein based distance for the
+  hierarchical clustering of histogram symbolic data. In *Data Science and
+  Classification* (IFCS 2006), Springer, 185-192.
+- Irpino A., Verde R., Lechevallier Y. (2006). Dynamic clustering of
+  histograms using Wasserstein metric. In *COMPSTAT 2006 - Advances in
+  Computational Statistics*, Physica-Verlag, 869-876.
+- Irpino A., Verde R. (2015). Basic statistics for distributional symbolic
+  variables: a new metric-based approach. *Advances in Data Analysis and
+  Classification*, 9(2), 143-175. doi:10.1007/s11634-014-0176-4
+- Crocetta C., Irpino A., Antonucci L., Marin C. (2025). A performance
+  indicator and its decomposition according to the impacts of different
+  aspects based on distributional data. *Quality & Quantity*, 59(3),
+  2091-2110. doi:10.1007/s11135-024-01956-0

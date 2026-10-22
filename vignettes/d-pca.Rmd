@@ -1,0 +1,157 @@
+---
+title: "4. Principal component analysis of discrete distributional data"
+output:
+  rmarkdown::html_vignette:
+    math_method: mathjax
+vignette: >
+  %\VignetteIndexEntry{4. Principal component analysis of discrete distributional data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+has_cub <- requireNamespace("CUB", quietly = TRUE)
+knitr::opts_chunk$set(eval = has_cub)
+```
+
+```{r, eval = !has_cub, echo = FALSE, results = "asis"}
+cat("**This vignette needs the 'CUB' package (for the `univer` data), which is not installed: code is shown but not run.**")
+```
+
+In the L2 Wasserstein space a distribution is represented by its quantile
+function. Principal component analysis of distributional data can therefore
+be performed on the **matrix of quantiles**: each distribution is described
+by its quantiles at a grid of probability levels, and a non-standardized PCA
+of this matrix approximates the Wasserstein PCA (Verde, Irpino and Balzanella, 2016).
+With several distributional variables, each one is a group of quantile
+columns and the groups are balanced by a **multiple factor analysis** (MFA),
+as proposed by Crocetta et al. (2025) to build a performance indicator from
+customer satisfaction data.
+
+```{r}
+library(DDAWASS)
+library(ggplot2)
+data(univer, package = "CUB")
+univer$Faculty <- factor(sprintf("F%02d", univer$faculty))
+univer$Gender  <- factor(univer$gender, levels = 0:1, labels = c("M", "W"))
+items <- c("informat", "willingn", "officeho", "compete", "global")
+M <- data2MatD(univer, unit = c("Faculty", "Gender"), vars = items,
+               support = 1:7, min.n = 10)
+gender <- sub(".*_", "", get.MatD.rownames(M))
+```
+
+## The matrix of quantiles
+
+`WD.quantile.matrix()` computes the quantiles of each distribution at the
+levels $0, 1/q, \dots, 1$. For a 1-7 scale the minimum and maximum are often
+1 and 7 for all groups, and these columns carry no information; the PCA
+functions add a negligible noise to constant columns.
+
+```{r}
+Q <- WD.quantile.matrix(M, quantiles = 10, vars = "global")
+Q[1:5, ]
+```
+
+## PCA of one distributional variable
+
+`WD.1d.PCA()` analyses a single variable; the means and the standard
+deviations of the distributions are projected as supplementary variables to
+help the interpretation of the axes.
+
+```{r}
+pca_g <- WD.1d.PCA(M, var = "global", quantiles = 10, plots = FALSE)
+round(pca_g$eig[1:4, ], 2)
+round(pca_g$quanti.sup$cor[, 1:2], 3)
+```
+
+The first component summarizes most of the variability; it is almost
+perfectly correlated with the mean of the distributions and negatively
+correlated with their standard deviation: it opposes satisfied groups with
+concentrated judgements to less satisfied groups with dispersed judgements.
+The second component explains a small share of variability and describes
+minor differences in the shape of the distributions.
+
+The **Spanish-fan plot** shows the quantile variables as consecutive
+triangles, from the minimum to the maximum (red: extreme quantiles, yellow:
+median):
+
+```{r}
+WD.plot.Spanish.fan(pca_g)
+```
+
+Groups can be plotted on the first plane, coloured by their mean global
+satisfaction:
+
+```{r}
+ind <- data.frame(pca_g$ind$coord[, 1:2], label = rownames(pca_g$ind$coord),
+                  mean = get.MatD.stats(M, "mean")$mat[, "global"], gender = gender)
+ggplot(ind, aes(Dim.1, Dim.2, colour = mean, shape = gender, label = label)) +
+  geom_hline(yintercept = 0, colour = "grey70") + geom_vline(xintercept = 0, colour = "grey70") +
+  geom_point(size = 2.5) + geom_text(vjust = -0.8, size = 3, show.legend = FALSE) +
+  scale_colour_gradient(low = "#c62320", high = "#275024") +
+  labs(title = "Global satisfaction: groups on the first factorial plane",
+       x = sprintf("Dim 1 (%.1f%%)", pca_g$eig[1, 2]),
+       y = sprintf("Dim 2 (%.1f%%)", pca_g$eig[2, 2])) +
+  theme_minimal()
+```
+
+## Multiple factor analysis of several items
+
+`WD.MultiplePCA()` analyses several distributional variables together. Here
+we use the four specific items, keeping `global` aside (it is the response
+of the regression vignette).
+
+```{r}
+mfa <- WD.MultiplePCA(M, list.of.vars = c("informat", "willingn", "officeho", "compete"),
+                      quantiles = 6, plots = FALSE)
+round(mfa$eig[1:4, ], 2)
+```
+
+The first factor is common to all the items; the contributions and the
+coordinates of the groups of quantiles (one group per item) show which items
+drive each factor:
+
+```{r}
+round(mfa$group$contrib[, 1:2], 1)
+round(mfa$group$coord[, 1:2], 3)
+```
+
+The first factor is a general satisfaction factor shared by the four items,
+while the second one is mostly specific to `officeho`: the evaluation of the
+office hours follows a different pattern from the evaluation of the staff and
+of the information.
+
+```{r}
+ind <- data.frame(mfa$ind$coord[, 1:2], label = rownames(mfa$ind$coord), gender = gender)
+ggplot(ind, aes(Dim.1, Dim.2, colour = gender, label = label)) +
+  geom_hline(yintercept = 0, colour = "grey70") + geom_vline(xintercept = 0, colour = "grey70") +
+  geom_point(size = 2.5) + geom_text(vjust = -0.8, size = 3, show.legend = FALSE) +
+  labs(title = "MFA of the four items", x = sprintf("Dim 1 (%.1f%%)", mfa$eig[1, 2]),
+       y = sprintf("Dim 2 (%.1f%%)", mfa$eig[2, 2])) +
+  theme_minimal()
+```
+
+The coordinates of the groups on the first factor can be used as a synthetic
+**performance indicator** of the orientation services, which takes into
+account the whole distributions of the judgements and not only their means
+(Crocetta et al., 2025):
+
+```{r}
+perf <- sort(mfa$ind$coord[, 1], decreasing = TRUE)
+round(head(perf, 5), 2)
+round(tail(perf, 5), 2)
+```
+
+## References
+
+- Verde R., Irpino A., Balzanella A. (2016). Dimension reduction techniques
+  for distributional symbolic data. *IEEE Transactions on Cybernetics*.
+  doi:10.1109/TCYB.2015.2389653
+- Irpino A., Verde R. (2015). Basic statistics for distributional symbolic
+  variables: a new metric-based approach. *Advances in Data Analysis and
+  Classification*, 9(2), 143-175. doi:10.1007/s11634-014-0176-4
+- Crocetta C., Irpino A., Antonucci L., Marin C. (2025). A performance
+  indicator and its decomposition according to the impacts of different
+  aspects based on distributional data. *Quality & Quantity*, 59(3),
+  2091-2110. doi:10.1007/s11135-024-01956-0
