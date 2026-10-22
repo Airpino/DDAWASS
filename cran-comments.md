@@ -1,7 +1,8 @@
 ## Test environments
 
 * local Ubuntu 24.04, R 4.3.3
-* win-builder (devel and release)   <- to be completed after devtools::check_win_devel()
+* GitHub Actions: windows-latest, macos-latest, ubuntu-latest (devel, release, oldrel-1)
+* win-builder (devel)   
 * R-hub / mac builder (optional)
 
 ## R CMD check results

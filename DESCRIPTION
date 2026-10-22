@@ -1,7 +1,7 @@
 Package: DDAWASS
 Type: Package
 Title: Discrete Distribution Data Analysis with Wasserstein Distance
-Version: 0.1.0
+Version: 1.0.0
 Date: 2026-10-21
 Authors@R: person(given = "Antonio", family = "Irpino", role = c("aut", "cre", "cph"),
     email = "antonio.irpino@unicampania.it",
